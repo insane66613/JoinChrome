@@ -358,7 +358,10 @@ if (!isServiceWorker) {
     };
     chrome.identity = {
         getProfileUserInfo: CrossContext.call("chrome.identity.getProfileUserInfo"),
-        getAuthToken: CrossContext.call("chrome.identity.getAuthToken")
+        getAuthToken: CrossContext.call("chrome.identity.getAuthToken"),
+        removeCachedAuthToken: CrossContext.call("chrome.identity.removeCachedAuthToken"),
+        getRedirectURL: CrossContext.call("chrome.identity.getRedirectURL"),
+        launchWebAuthFlow: CrossContext.call("chrome.identity.launchWebAuthFlow")
     };
     chrome.runtime = {
         getManifest: CrossContext.call("chrome.runtime.getManifest"),
@@ -409,6 +412,24 @@ if (isServiceWorker) {
     }
     }
 
+    // Upstream shares a pending authentication window across retries. Some
+    // Chromium environments expose no interactive identity API, so keep the
+    // send-only fallback operational when this method is absent.
+    if (typeof chrome.identity?.launchWebAuthFlow === "function") {
+        const originalLaunchWebAuthFlow = chrome.identity.launchWebAuthFlow;
+        let webAuthFlowLauncher = null;
+        chrome.identity.launchWebAuthFlow = async function (...input) {
+            if (webAuthFlowLauncher) {
+                return await webAuthFlowLauncher;
+            }
+            webAuthFlowLauncher = originalLaunchWebAuthFlow.call(chrome.identity, ...input);
+            try {
+                return await webAuthFlowLauncher;
+            } finally {
+                webAuthFlowLauncher = null;
+            }
+        };
+    }
     // I need to replace the original addListener with my own because sometimes gcms will arrive before a background page registers its listeners and those pushes wouldn't be delivered. Wait for the listeners to be available and the push it.
     const replaceListenerThatWakesUpServiceWorker = (addListenerOnThis, tag) => {
         const joinListeners = [];
